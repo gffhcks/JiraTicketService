@@ -32,7 +32,3 @@ My use case for this is to more easily create Jira tickets from my phone:
 * Syncthing sends the changes back to my phone. When the lines are gone, I know they've been created as tickets.
 
 This lets me think of new tasks while I'm away from my desk and ensure they get added to my todo list, without having to deal with Atlassian's mobile app. I can jot down the things I need to handle, then do more complicated things (scheduling, due dates, etc.) from my desk later.
-
-## Known Issues
-
-* System tray icon's right-click menu is intended to support modifying the run interval, but these options do not currently appear in the menu.

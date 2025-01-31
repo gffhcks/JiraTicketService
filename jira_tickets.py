@@ -9,16 +9,57 @@ import msvcrt
 import hashlib
 import glob
 import json
+import logging
+from logging.handlers import RotatingFileHandler
+
+def setup_logging():
+    """Setup logging to both file and console with rotation."""
+    logger = logging.getLogger('JiraTickets')
+    logger.setLevel(logging.INFO)
+    
+    # Create logs directory if it doesn't exist
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    logs_dir = os.path.join(script_dir, 'logs')
+    os.makedirs(logs_dir, exist_ok=True)
+    
+    # Setup rotating file handler (10 MB per file, keep 5 backup files)
+    log_file = os.path.join(logs_dir, 'jira_tickets.log')
+    file_handler = RotatingFileHandler(
+        log_file, 
+        maxBytes=10*1024*1024,  # 10 MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    file_handler.setLevel(logging.INFO)
+    
+    # Setup console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    
+    # Create formatter and add it to the handlers
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # Add the handlers to the logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
+
+# Setup logging
+logger = setup_logging()
 
 def load_secrets():
     """Load secrets from secrets.json file."""
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         secrets_path = os.path.join(script_dir, 'secrets.json')
+        logger.info(f"Loading secrets from: {secrets_path}")
         with open(secrets_path) as f:
             return json.load(f)['jira']
     except Exception as e:
-        print(f"Failed to load secrets: {str(e)}")
+        logger.error(f"Failed to load secrets: {str(e)}")
         return None
 
 # Load Jira connection settings from secrets
@@ -30,6 +71,7 @@ JIRA_SERVER = secrets['server']
 JIRA_EMAIL = secrets['email']
 JIRA_API_TOKEN = secrets['api_token']
 JIRA_PROJECT = secrets['project']
+TICKET_FILE = secrets['ticket_file']
 
 def generate_content_hash(text):
     """Generate a hash from the exact content."""
@@ -52,7 +94,7 @@ def connect_to_jira():
             basic_auth=(JIRA_EMAIL, JIRA_API_TOKEN)
         )
     except Exception as e:
-        print(f"Failed to connect to Jira: {str(e)}")
+        logger.error(f"Failed to connect to Jira: {str(e)}")
         return None
 
 def find_existing_ticket(jira, content_hash):
@@ -68,7 +110,7 @@ def create_ticket(jira, line, content_hash):
         # Check for existing open ticket
         existing_ticket = find_existing_ticket(jira, content_hash)
         if existing_ticket:
-            print(f"Skipping duplicate content - open ticket exists: {existing_ticket.key}")
+            logger.info(f"Skipping duplicate content - open ticket exists: {existing_ticket.key}")
             return existing_ticket.key
 
         # Extract hashtags and clean summary
@@ -91,7 +133,7 @@ def create_ticket(jira, line, content_hash):
         new_issue = jira.create_issue(fields=issue_dict)
         return new_issue.key
     except Exception as e:
-        print(f"Failed to create ticket for '{line}': {str(e)}")
+        logger.error(f"Failed to create ticket for '{line}': {str(e)}")
         return None
 
 def process_line(jira, line):
@@ -105,7 +147,7 @@ def process_line(jira, line):
     if ticket_key:
         labels = extract_hashtags(line)
         labels_str = f" with labels: {', '.join(labels)}" if labels else ""
-        print(f"Processed content hash {content_hash} - ticket {ticket_key} for: {clean_summary(line)}{labels_str}")
+        logger.info(f"Processed content hash {content_hash} - ticket {ticket_key} for: {clean_summary(line)}{labels_str}")
         return True, line
     return False, line
 
@@ -160,12 +202,12 @@ def process_single_file(filename, jira):
                     msvcrt.locking(source_file.fileno(), msvcrt.LK_UNLCK, 1)
                     
             except IOError as e:
-                print(f"File {filename} is locked, waiting for access...")
+                logger.warning(f"File {filename} is locked, waiting for access...")
                 time.sleep(1)
                 continue
             
             except Exception as e:
-                print(f"Error processing file {filename}: {str(e)}")
+                logger.error(f"Error processing file {filename}: {str(e)}")
                 break
 
     finally:
@@ -173,14 +215,14 @@ def process_single_file(filename, jira):
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
         except Exception as e:
-            print(f"Error cleaning up temporary file: {str(e)}")
+            logger.error(f"Error cleaning up temporary file: {str(e)}")
 
     return successful_count
 
 def process_file(filename):
     """Process main file and any sync conflict files."""
     if not os.path.exists(filename):
-        print(f"File {filename} not found")
+        logger.error(f"File {filename} not found")
         return
 
     # Connect to Jira
@@ -191,22 +233,21 @@ def process_file(filename):
     total_successful = 0
     
     # Process main file
-    print(f"Processing main file: {filename}")
+    logger.info(f"Processing main file: {filename}")
     total_successful += process_single_file(filename, jira)
 
     # Process sync conflict files
     sync_files = get_sync_conflict_files(filename)
     for sync_file in sync_files:
-        print(f"\nProcessing sync conflict file: {sync_file}")
+        logger.info(f"\nProcessing sync conflict file: {sync_file}")
         total_successful += process_single_file(sync_file, jira)
         try:
             os.remove(sync_file)
-            print(f"Deleted sync conflict file: {sync_file}")
+            logger.info(f"Deleted sync conflict file: {sync_file}")
         except Exception as e:
-            print(f"Failed to delete sync conflict file {sync_file}: {str(e)}")
+            logger.error(f"Failed to delete sync conflict file {sync_file}: {str(e)}")
 
-    print(f"\nTotal tickets processed: {total_successful}")
+    logger.info(f"\nTotal tickets processed: {total_successful}")
 
 if __name__ == "__main__":
-    input_file = r"F:\Users\dubba\Documents\Obsidian\Default\_GTD\tickets.md"
-    process_file(input_file)
+    process_file(TICKET_FILE)
